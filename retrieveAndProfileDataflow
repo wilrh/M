@@ -1,0 +1,43 @@
+// This Query retrieves data from a specific entity within a Power Platform Dataflow, profiles the data, and provides insights into its structure and content.
+// Developed by wilrh@gmail.com
+
+let
+
+  // Retrieve data from Power Platform Dataflows
+  RetrieveDataflows = PowerPlatform.Dataflows([]),
+
+  // Select the "Workspaces" data from the source
+  SelectWorkspaces = RetrieveDataflows{[Id = "Workspaces"]}[Data],
+
+  // Filter to get the specific workspace using the "Data Model Workspace ID"
+  FILTER_Workspace = SelectWorkspaces{[workspaceId = #"Data Model Workspace ID"]}[Data],
+
+  // Filter to get the specific dataflow using the "Data Model Dataflow ID"
+  FILTER_Dataflow = FILTER_Workspace{[dataflowId = #"Data Model Dataflow ID"]}[Data],
+
+  // Retrieve the desired entity data
+  RetrieveEntity = FILTER_Dataflow{[entity = "dimPayment", version = ""]}[Data],
+
+  // Generate a profile of the loaded table
+  GenerateTableProfile = Table.Profile(RetrieveEntity),
+
+  // Convert column types to number for columns "Min", "Max", "Average", "StandardDeviation", "Count", "NullCount", and "DistinctCount"
+  ChangedType = Table.TransformColumnTypes(
+    GenerateTableProfile,
+    {
+      {"Min", type number},
+      {"Max", type number},
+      {"Average", type number},
+      {"StandardDeviation", type number},
+      {"Count", type number},
+      {"NullCount", type number},
+      {"DistinctCount", type number}
+    }
+  ),
+
+  // Add a new column with the table name
+  AddTableNameColumn = Table.AddColumn(ChangedType, "TableName", each "dimPayment", type text)
+
+in
+
+  AddTableNameColumn
