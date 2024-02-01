@@ -1,0 +1,28 @@
+// This Query profiles the data from a specific table and provides insights into its structure and content.
+// Developed by hannah.williams@foe.co.uk
+
+let
+
+  // Load data from the table
+  LoadSourceData = e_br_Theme,
+
+  // Generate a profile of the loaded table
+  GenerateTableProfile = Table.Profile(LoadSourceData),
+
+  // Convert column types to number for columns "Min", "Max", "Average", "StandardDeviation", "Count", "NullCount", and "DistinctCount"
+  ChangedType = Table.TransformColumnTypes(
+    GenerateTableProfile,
+    {
+      {"Min", type number},
+      {"Max", type number},
+      {"Average", type number},
+      {"StandardDeviation", type number},
+      {"Count", type number},
+      {"NullCount", type number},
+      {"DistinctCount", type number}
+    }
+  )
+
+in
+
+  ChangedType
