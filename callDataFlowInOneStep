@@ -1,0 +1,9 @@
+let
+  // Access the specific Entity within the Dataflow in the Workspace
+  FindEntity = PowerPlatform.Dataflows(null){[Id = "Workspaces"]
+  }[Data]{[workspaceName = DataWarehouseWorkspace]
+  }[Data]{[dataflowName = DataWarehouseDataflow]
+  }[Data]{[entity = "factSupporterChangeCampaignActivity", version = ""]
+  }[Data]
+in
+  FindEntity
