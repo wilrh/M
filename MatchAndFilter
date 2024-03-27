@@ -1,0 +1,110 @@
+let
+    // Define the function MatchAndFilter
+    MatchAndFilter = (InputTable as text, DateFieldName as text) as table =>
+    let
+    // Dynamically retrieve the entity table based on the provided parameters
+    InputTable = PowerPlatform.Dataflows(null){[Id = "Workspaces"]}[Data]{
+    [workspaceName = DataWarehouseWorkspace]
+    }[Data]{[dataflowName = DataWarehouseDataflow]}[Data]{[entity = InputTable, version = ""]}[
+    Data
+    ],
+    // Retrieve the dimDate entity
+    dimDate = PowerPlatform.Dataflows(null){[Id = "Workspaces"]}[Data]{
+    [workspaceName = DataWarehouseWorkspace]
+    }[Data]{[dataflowName = DataWarehouseDataflow]}[Data]{[entity = "dimDate", version = ""]}[
+    Data
+    ],
+    // Retrieve the factSupporterBehaviouralSegmentChange entity
+    factSupporterBehaviouralSegmentChange = PowerPlatform.Dataflows(null){[Id = "Workspaces"]}[
+    Data
+    ]{[workspaceName = DataWarehouseWorkspace]}[Data]{[dataflowName = DataWarehouseDataflow]}[
+    Data
+    ]{[entity = "factSupporterBehaviouralSegmentChange", version = ""]}[Data],
+    // Select and deduplicate columns "supporterKey", "dateFromKey", and "dateToKey"
+    SelectAndDeduplicateColumns = Table.SelectColumns(
+    factSupporterBehaviouralSegmentChange,
+    {"supporterKey", "dateFromKey", "dateToKey", "segmentChangeKey"}
+    ),
+    RemovedDuplicates = Table.Distinct(SelectAndDeduplicateColumns),
+    // Join the processed table with InputTable on "supporterKey"
+    JoinTablesOnKey = Table.NestedJoin(
+    RemovedDuplicates,
+    {"supporterKey"},
+    InputTable,
+    {"supporterKey"},
+    "JoinedTable",
+    JoinKind.Inner
+    ),
+    // Expand the joined table to include selected columns and rename them
+    ExpandAndRenameColumns = Table.ExpandTableColumn(
+    JoinTablesOnKey,
+    "JoinedTable",
+    {"supporterKey", DateFieldName},
+    {"Joined.supporterKey", "Joined." & DateFieldName}
+    ),
+    // Filter rows where the specified date field is within the "dateFromKey" and "dateToKey" range
+    FILTER_DateInRange = Table.SelectRows(
+    ExpandAndRenameColumns,
+    each Record.Field(_, "Joined." & DateFieldName)
+    >= _[dateFromKey] and Record.Field(_, "Joined." & DateFieldName)
+    < _[dateToKey]
+    ),
+    // Join the processed table with InputTable on the DateFieldName
+    JoinTablesOnDateKey = Table.NestedJoin(
+    FILTER_DateInRange,
+    {"Joined." & DateFieldName},
+    dimDate,
+    {"dateKey"},
+    "JoinedDateTable",
+    JoinKind.LeftOuter
+    ),
+    // Expand the joined table to include selected columns and rename them
+    ExpandAndRenameDateColumns = Table.ExpandTableColumn(
+    JoinTablesOnDateKey,
+    "JoinedDateTable",
+    {"datetime"},
+    {"incrementalRefreshDate"}
+    ),
+    // Add a column that combines "supporterKey", "dateFromKey", and "dateToKey" into a unique identifier
+    AddSegmentAtTimeOfKey = Table.AddColumn(
+    ExpandAndRenameDateColumns,
+    "supporterBehaviouralSegmentKey",
+    each Text.From(_[supporterKey])
+    & Text.From(_[dateFromKey])
+    & Text.From(_[dateToKey])
+    & Text.From(_[segmentChangeKey]),
+    type text
+    ),
+    // Add a column combining "supporterKey" and the DateFieldName
+    AddDateFieldNameKey = Table.AddColumn(
+    AddSegmentAtTimeOfKey,
+    "segmentAtTimeOf" & DateFieldName,
+    each Text.From(_[supporterKey]) & Text.From(Record.Field(_, "Joined." & DateFieldName)),
+    type text
+    ),
+    // Remove surplus columns
+    RemoveColumns = Table.SelectColumns(
+    AddDateFieldNameKey,
+    {
+    "supporterBehaviouralSegmentKey",
+    "segmentAtTimeOf" & DateFieldName,
+    "incrementalRefreshDate"
+    }
+    ),
+    // Remove any duplicate rows within the table
+    RemovedDuplicatesAgain = Table.Distinct(RemoveColumns)
+in
+    RemovedDuplicatesAgain,
+    // Documentation for the function
+    DocumentationMetadata = [
+    Documentation.Name = "MatchAndFilter",
+    Documentation.Description
+    = "This function matches rows from an input dataflow entity with 'factSupporterBehaviouralSegmentChange' based on 'supporterKey' and filters those rows based on a specified date field falling within a date range. Additionally, it adds a unique identifier column 'supporterBehaviouralSegmentKey' combining 'supporterKey', 'dateFromKey', 'dateToKey' and 'segmentChangeKey', and another identifier combining 'supporterKey' with the specified date field."
+    ],
+    // Apply metadata to the function type
+    MatchAndFilterWithMetadata = Value.ReplaceType(
+    MatchAndFilter,
+    Value.ReplaceMetadata(Value.Type(MatchAndFilter), DocumentationMetadata)
+    )
+in
+    MatchAndFilterWithMetadata
