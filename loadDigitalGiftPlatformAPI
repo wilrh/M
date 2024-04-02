@@ -1,0 +1,71 @@
+let
+  loadDigitalGiftPlatformAPI = (start as text, end as text) =>
+    let
+
+      // Fetch data from the API (e.g. https://dgp.friendsoftheearth.uk/services/api/stats?start=2020-12-01&end=2021-01-04), and convert JSON response to a table
+      FetchAndConvert = Json.Document(
+        Web.Contents(
+          "https://dgp.friendsoftheearth.uk/services/api",
+          [RelativePath = "stats", Query = [start = start, end = end]]
+        )
+      ),
+      ConvertToTable = Table.FromRecords({FetchAndConvert}),
+      // Extract the date part from the "rangeStart" column
+      ExtractDatePart = Table.TransformColumns(
+        ConvertToTable,
+        {{"rangeStart", each Text.BeforeDelimiter(_, "T"), type text}}
+      ),
+      // Select relevant columns and expand "fullLeaderBoardData"
+      SelectAndExpandColumns = Table.ExpandRecordColumn(
+        Table.ExpandListColumn(
+          Table.SelectColumns(
+            ExtractDatePart,
+            {
+              "rangeStart",
+              "totalOrders",
+              "ordersWithDonation",
+              "ordersWithoutDonation",
+              "ordersWithGiftAid",
+              "singleGiftOrders",
+              "singleGiftOrdersWithDonation",
+              "multipleGiftOrders",
+              "multipleGiftOrdersWithDonation",
+              "donationBaseTotal",
+              "donationsWithGiftAid",
+              "donationsWithoutGiftAid",
+              "giftAidBoost",
+              "incomeTotalIncludingGiftAidBoost",
+              "fullLeaderBoardData"
+            }
+          ),
+          "fullLeaderBoardData"
+        ),
+        "fullLeaderBoardData",
+        {"name", "url", "orderCount", "sendCount", "sendDetails", "baseProductIncome"},
+        {"name", "url", "orderCount", "sendCount", "sendDetails", "baseProductIncome"}
+      ),
+      // Further expand the nested "sendDetails" column into multiple columns
+      FinalExpand = Table.ExpandRecordColumn(
+        SelectAndExpandColumns,
+        "sendDetails",
+        {
+          "scheduledSends",
+          "immediateSends",
+          "withDonation",
+          "withoutDonation",
+          "withGiftAid",
+          "withoutGiftAid"
+        },
+        {
+          "scheduledSends",
+          "immediateSends",
+          "withDonation",
+          "withoutDonation",
+          "withGiftAid",
+          "withoutGiftAid"
+        }
+      )
+    in
+      FinalExpand
+in
+  loadDigitalGiftPlatformAPI
