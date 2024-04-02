@@ -1,0 +1,98 @@
+let
+  // Generate a list of dates from 2020-04-20 to today, convert to a table, and add "startDate" column
+  GenerateAndConvertDateList = Table.TransformColumnTypes(
+    Table.FromList(
+      List.Dates(
+        #date(2020, 04, 20),
+        Duration.Days(Date.From(DateTime.LocalNow()) - #date(2020, 04, 20)),
+        #duration(1, 0, 0, 0)
+      ),
+      Splitter.SplitByNothing(),
+      {"startDate"},
+      null,
+      ExtraValues.Error
+    ),
+    {"startDate", type date}
+  ),
+  // Add "endDate" column which is one day after "startDate", and sort by "startDate" in descending order
+  PrepareDatesTable = Table.Sort(
+    Table.AddColumn(
+      GenerateAndConvertDateList,
+      "endDate",
+      each Date.AddDays([startDate], 1),
+      type date
+    ),
+    {"startDate", Order.Descending}
+  ),
+  // Call loadDigitalGiftPlatformAPI function for each row, expand the results, and change column types
+  CallAPIAndExpand = Table.TransformColumnTypes(
+    Table.ExpandTableColumn(
+      Table.AddColumn(
+        PrepareDatesTable,
+        "loadDigitalGiftPlatformAPI",
+        each loadDigitalGiftPlatformAPI(
+          Date.ToText([startDate], "yyyy-MM-dd"),
+          Date.ToText([endDate], "yyyy-MM-dd")
+        )
+      ),
+      "loadDigitalGiftPlatformAPI",
+      {
+        "rangeStart",
+        "totalOrders",
+        "ordersWithDonation",
+        "ordersWithoutDonation",
+        "ordersWithGiftAid",
+        "singleGiftOrders",
+        "singleGiftOrdersWithDonation",
+        "multipleGiftOrders",
+        "multipleGiftOrdersWithDonation",
+        "donationBaseTotal",
+        "donationsWithGiftAid",
+        "donationsWithoutGiftAid",
+        "giftAidBoost",
+        "incomeTotalIncludingGiftAidBoost",
+        "name",
+        "url",
+        "categories",
+        "orderCount",
+        "sendCount",
+        "scheduledSends",
+        "immediateSends",
+        "withDonation",
+        "withoutDonation",
+        "withGiftAid",
+        "withoutGiftAid",
+        "baseProductIncome"
+      }
+    ),
+    {
+      {"rangeStart", type date},
+      {"totalOrders", Int64.Type},
+      {"ordersWithDonation", Int64.Type},
+      {"ordersWithoutDonation", Int64.Type},
+      {"ordersWithGiftAid", Int64.Type},
+      {"singleGiftOrders", Int64.Type},
+      {"singleGiftOrdersWithDonation", Int64.Type},
+      {"multipleGiftOrders", Int64.Type},
+      {"multipleGiftOrdersWithDonation", Int64.Type},
+      {"donationBaseTotal", Currency.Type},
+      {"donationsWithGiftAid", Currency.Type},
+      {"donationsWithoutGiftAid", Currency.Type},
+      {"giftAidBoost", Currency.Type},
+      {"incomeTotalIncludingGiftAidBoost", Currency.Type},
+      {"name", type text},
+      {"url", type text},
+      {"categories", type text},
+      {"orderCount", Int64.Type},
+      {"sendCount", Int64.Type},
+      {"scheduledSends", Int64.Type},
+      {"immediateSends", Int64.Type},
+      {"withDonation", Int64.Type},
+      {"withoutDonation", Int64.Type},
+      {"withGiftAid", Int64.Type},
+      {"withoutGiftAid", Int64.Type},
+      {"baseProductIncome", Currency.Type}
+    }
+  )
+in
+  CallAPIAndExpand
