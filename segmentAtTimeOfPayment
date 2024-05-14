@@ -1,0 +1,100 @@
+let
+	// Access the factPayment Dataflow, select required columns and remove duplicates
+	AccessFactPayment = Table.Buffer (
+		Table.Distinct (
+			Table.SelectColumns (
+				PowerPlatform.Dataflows ( null ){
+					[ Id = "Workspaces" ]
+				}[Data]{
+					[
+						workspaceName = DataWarehouseWorkspace
+					]
+				}[Data]{
+					[ dataflowName = DataWarehouseDataflow ]
+				}[Data]{
+					[ entity = "factPayment", version = "" ]
+				}[Data],
+				{ "supporterKey", "datePaidKey" }
+			)
+		)
+	),
+	// Access the factSupporterBehaviouralSegmentChange Dataflow, select required columns and remove duplicates
+	AccessFactSupporterBehaviouralSegmentChange
+		= Table.Buffer (
+		Table.Distinct (
+			Table.SelectColumns (
+				PowerPlatform.Dataflows ( null ){
+					[ Id = "Workspaces" ]
+				}[Data]{
+					[
+						workspaceName = DataWarehouseWorkspace
+					]
+				}[Data]{
+					[ dataflowName = DataWarehouseDataflow ]
+				}[Data]{
+					[
+						entity
+							= "factSupporterBehaviouralSegmentChange",
+						version = ""
+					]
+				}[Data],
+				{
+					"supporterKey",
+					"dateFromKey",
+					"dateToKey",
+					"segmentKey"
+				}
+			)
+		)
+	),
+	// Define a function to process a batch of data based on the last digit of supporterKey
+	ProcessBatch = ( lastDigit as number ) =>
+		let
+
+			// Filter factPayment based on the last digit of the supporterKey
+			FilteredFactPayment = Table.SelectRows (
+				AccessFactPayment,
+				each Number.Mod ( [supporterKey], 10 )
+					= lastDigit
+			),
+			// Filter factSupporterBehaviouralSegmentChange based on the last digit of the supporterKey
+			FilteredFactSupporterBehaviouralSegmentChange
+				= Table.SelectRows (
+				AccessFactSupporterBehaviouralSegmentChange,
+				each Number.Mod ( [supporterKey], 10 )
+					= lastDigit
+			),
+			// Join the two deduplicated and filtered tables on supporterKey
+			JoinedTables = Table.Join (
+				FilteredFactPayment,
+				"supporterKey",
+				FilteredFactSupporterBehaviouralSegmentChange,
+				"supporterKey",
+				JoinKind.Inner
+			),
+			// Filter rows where "datePaidKey" is between "dateFromKey" and "dateToKey"
+			FilteredRows = Table.SelectRows (
+				JoinedTables,
+				each [datePaidKey]
+					>= [dateFromKey] and [datePaidKey]
+					< [dateToKey]
+			)
+		in
+			FilteredRows,
+	// Create a list of digits from 0 to 9
+	Digits = List.Numbers ( 0, 10 ),
+	// Process each batch
+	ProcessPartitions = List.Accumulate (
+		Digits,
+		{},
+		( state, current ) =>
+			List.Combine (
+				{ state, { ProcessBatch ( current ) } }
+			)
+	),
+	// Combine the results
+	CombinePartitions = Table.Combine (
+		ProcessPartitions
+	)
+in
+	CombinePartitions
