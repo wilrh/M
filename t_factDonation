@@ -1,0 +1,35 @@
+// This query processes donation data by merging it with the date dimension for incremental refresh purposes, and then generates two additional columns that concatenate supporter keys with set up and first payment dates to create segment identifiers.
+// Developed by hannah.williams@foe.co.uk
+let
+    // Load the source table "e_factDonation"
+    SourceData = e_factDonation,
+    // Group the "e_dimDate" table by "dateKey" and "datetime", creating a count column that counts the number of rows in each group
+    GroupDateDimension = Table.Group(
+        e_dimDate, {"dateKey", "datetime"}, {{"Count", each Table.RowCount(_), Int64.Type}}
+    ),
+    // Merge the source data (donations) with the grouped date dimension on "setUpDateKey" and "dateKey"
+    // This adds the "datetime" column from the date dimension to the source table and renames it to "incrementalRefreshDate"
+    MergeWithIncrementalRefreshDate = Table.ExpandTableColumn(
+        Table.NestedJoin(
+            SourceData, {"setUpDateKey"}, GroupDateDimension, {"dateKey"}, "joinedDateData", JoinKind.LeftOuter
+        ),
+        "joinedDateData",
+        {"datetime"},
+        {"incrementalRefreshDate"}
+    ),
+    // Add a column that concatenates the "supporterKey" with "setUpDateKey" to form the "segmentAtTimeOfSetUpDateKey" column
+    AddSegmentAtTimeOfSetUpDateKey = Table.AddColumn(
+        MergeWithIncrementalRefreshDate,
+        "segmentAtTimeOfSetUpDateKey",
+        each Text.From([supporterKey]) & Text.From([setUpDateKey]),
+        type text
+    ),
+    // Add a column that concatenates the "supporterKey" with "firstScheduledPaymentDateKey" to form the "segmentAtTimeOfFirstScheduledPaymentDateKey" column
+    AddSegmentAtTimeOfFirstScheduledPaymentDateKey = Table.AddColumn(
+        AddSegmentAtTimeOfSetUpDateKey,
+        "segmentAtTimeOfFirstScheduledPaymentDateKey",
+        each Text.From([supporterKey]) & Text.From([firstScheduledPaymentDateKey]),
+        type text
+    )
+in
+    AddSegmentAtTimeOfFirstScheduledPaymentDateKey
