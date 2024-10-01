@@ -1,0 +1,202 @@
+// This Query extracts data from the 'factLegacyMarketingStatusChange' entity in the Data Warehouse UAT workspace, performs various transformations including grouping, merging, and adding custom columns, and finally outputs a cleaned dataset with adjusted date and marketing status keys.
+// Developed by hannah.williams@foe.co.uk
+let
+    // Extract records from the 'factLegacyMarketingStatusChange' entity
+    ExtractFactLegacyMarketingStatusChange = e_factLegacyMarketingStatusChange,
+    // Group by "supporterKey" and "dateFromKey" to calculate the maximum "dateToKey" and adjust it if conditions are met
+    GroupedMaxDateToKey = Table.Group(
+        ExtractFactLegacyMarketingStatusChange,
+        {"supporterKey", "dateFromKey"},
+        {
+            {
+                "adjustedDateToKey",
+                each
+                    let
+                        MaxDateToKey = List.Max([dateToKey]), CurrentDateFromKey =[dateFromKey]{0}
+                    in
+                        if MaxDateToKey = 20210921 and CurrentDateFromKey > 20210921 then
+                            CurrentDateFromKey + 1
+                        else
+                            MaxDateToKey,
+                Int64.Type
+            }
+        }
+    ),
+    // Join the original data with the "GroupedMaxDateToKey" table on "supporterKey" and "dateFromKey" and expand the "adjustedDateToKey" column
+    JoinedAdjustedDateToKey = Table.ExpandTableColumn(
+        Table.NestedJoin(
+            ExtractFactLegacyMarketingStatusChange,
+            {"supporterKey", "dateFromKey"},
+            GroupedMaxDateToKey,
+            {"supporterKey", "dateFromKey"},
+            "MaxDateToKeyJoin",
+            JoinKind.LeftOuter
+        ),
+        "MaxDateToKeyJoin",
+        {"adjustedDateToKey"},
+        {"adjustedDateToKey"}
+    ),
+    // Group by "supporterKey" and "dateFromKey" to calculate the maximum "legacyMarketingStatusKey"
+    GroupedMaxLegacyMarketingStatusKey = Table.Group(
+        JoinedAdjustedDateToKey,
+        {"supporterKey", "dateFromKey"},
+        {{"adjustedLegacyMarketingStatusKey", each List.Max([legacyMarketingStatusKey]), Int64.Type}}
+    ),
+    // Join the data with "GroupedMaxLegacyMarketingStatusKey" on "supporterKey", "dateFromKey", and "legacyMarketingStatusKey" and remove the join column
+    JoinedLegacyMarketingStatusKey = Table.RemoveColumns(
+        Table.NestedJoin(
+            JoinedAdjustedDateToKey,
+            {"supporterKey", "dateFromKey", "legacyMarketingStatusKey"},
+            GroupedMaxLegacyMarketingStatusKey,
+            {"supporterKey", "dateFromKey", "adjustedLegacyMarketingStatusKey"},
+            "MaxLegacyMarketingStatusKeyJoin",
+            JoinKind.Inner
+        ),
+        {"MaxLegacyMarketingStatusKeyJoin"}
+    ),
+    // Add columns for "reconfirmationCount" and "latestReconfirmationDateKey" as combined columns
+    AddedReconfirmationColumns = Table.AddColumn(
+        JoinedLegacyMarketingStatusKey,
+        "CombinedColumns",
+        each [reconfirmationCount = 1, latestReconfirmationDateKey = [dateFromKey]],
+        type [reconfirmationCount = Int64.Type, latestReconfirmationDateKey = Int64.Type]
+    ),
+    // Expand the combined columns into individual columns
+    ExpandedReconfirmationColumns = Table.ExpandRecordColumn(
+        AddedReconfirmationColumns, "CombinedColumns", {"reconfirmationCount", "latestReconfirmationDateKey"}
+    ),
+    // Custom function to merge date ranges
+    MergeDateRanges = (inputTable as table) as table =>
+        let
+            SortedTable = Table.Sort(inputTable, {{"dateFromKey", Order.Ascending}}),
+            MergedRows = List.Accumulate(
+                {1..Table.RowCount(SortedTable) - 1},
+                {SortedTable{0}},
+                (state, currentIndex) =>
+                    let
+                        current = List.Last(state),
+                        next = SortedTable{currentIndex},
+                        shouldMerge = next[dateFromKey] <= current[adjustedDateToKey],
+                        newRow =
+                            if shouldMerge then
+                                current
+                                    & [
+                                        adjustedDateToKey = next[adjustedDateToKey],
+                                        reconfirmationCount = current[reconfirmationCount] + 1,
+                                        latestReconfirmationDateKey = next[dateFromKey]
+                                    ]
+                            else
+                                next,
+                        updatedState = if shouldMerge then List.RemoveLastN(state, 1) & {newRow} else state & {next}
+                    in
+                        updatedState
+            ),
+            ResultTable = Table.FromRecords(MergedRows)
+        in
+            ResultTable,
+    // Group by "supporterKey" and "legacyMarketingStatusKey" and apply the "MergeDateRanges" function
+    GroupedAndMergedDateRanges = Table.Group(
+        ExpandedReconfirmationColumns,
+        {"supporterKey", "legacyMarketingStatusKey"},
+        {"MergedData", each MergeDateRanges(_), type table}
+    ),
+    // Expand the "MergedData" column and change column types
+    ExpandedAndTypedMergedData = Table.TransformColumnTypes(
+        Table.ExpandTableColumn(
+            GroupedAndMergedDateRanges,
+            "MergedData",
+            {
+                "dateFromKey",
+                "marketingKey",
+                "supporterSelectionAttributesKey",
+                "isActive",
+                "recordCreationDate",
+                "adjustedDateToKey",
+                "reconfirmationCount",
+                "latestReconfirmationDateKey"
+            },
+            {
+                "dateFromKey",
+                "marketingKey",
+                "supporterSelectionAttributesKey",
+                "isActive",
+                "recordCreationDate",
+                "dateToKey",
+                "reconfirmationCount",
+                "latestReconfirmationDateKey"
+            }
+        ),
+        {
+            {"dateFromKey", Int64.Type},
+            {"marketingKey", Int64.Type},
+            {"supporterSelectionAttributesKey", Int64.Type},
+            {"dateToKey", Int64.Type},
+            {"reconfirmationCount", Int64.Type},
+            {"latestReconfirmationDateKey", Int64.Type},
+            {"isActive", type logical},
+            {"recordCreationDate", type datetime}
+        }
+    ),
+    // Group by "supporterKey" to calculate the ActiveStatusRank for legacyMarketingStatusKey 2, 3, 4
+    GroupedActiveStatusRank = Table.Group(
+        ExpandedAndTypedMergedData,
+        {"supporterKey"},
+        {
+            {
+                "ActiveStatusRankData",
+                each
+                    let
+                        FilteredTable = Table.SelectRows(
+                            _,
+                            each
+                                [legacyMarketingStatusKey] = 2
+                                or [legacyMarketingStatusKey] = 3
+                                or [legacyMarketingStatusKey] = 4
+                        ),
+                        SortedTable = Table.Sort(FilteredTable, {{"dateFromKey", Order.Descending}}),
+                        IndexedTable = Table.AddIndexColumn(SortedTable, "lastActiveStatus", 1, 1),
+                        SelectedColumns = Table.SelectColumns(
+                            IndexedTable, {"legacyMarketingStatusKey", "dateFromKey", "lastActiveStatus"}
+                        )
+                    in
+                        SelectedColumns,
+                type table
+            }
+        }
+    ),
+    // Join the ActiveStatusRankData back to the main table
+    JoinedActiveStatusRank = Table.NestedJoin(
+        ExpandedAndTypedMergedData,
+        {"supporterKey", "legacyMarketingStatusKey", "dateFromKey"},
+        Table.ExpandTableColumn(
+            GroupedActiveStatusRank,
+            "ActiveStatusRankData",
+            {"legacyMarketingStatusKey", "dateFromKey", "lastActiveStatus"}
+        ),
+        {"supporterKey", "legacyMarketingStatusKey", "dateFromKey"},
+        "ActiveStatusRankJoin",
+        JoinKind.LeftOuter
+    ),
+    // Expand the joined ActiveStatusRank column
+    ExpandActiveStatusRank = Table.ExpandTableColumn(
+        JoinedActiveStatusRank, "ActiveStatusRankJoin", {"lastActiveStatus"}, {"lastActiveStatus"}
+    ),
+    ChangedActiveStatusRankType = Table.TransformColumnTypes(
+        ExpandActiveStatusRank, {{"lastActiveStatus", Int64.Type}}
+    ),
+    // Add a column to combine "supporterKey" and "dateFromKey" into a unique identifier to create a relationship with dimLegacyMarketingStatusMovement.
+    AddLegacyStatusMovementKey = Table.AddColumn(
+        ChangedActiveStatusRankType,
+        "legacyStatusMovementKey",
+        each [dateFromKey] * 100000000 + [supporterKey],
+        Int64.Type
+    ),
+    // Add a column to combine "supporterKey", "dateFromKey", and "legacyMarketingStatusKey" into a unique identifier to create a relationship with dimPreviousLegacyMarketingStatus.
+    AddPreviousLegacyMarketingStatusKey = Table.AddColumn(
+        AddLegacyStatusMovementKey,
+        "previousLegacyMarketingStatusKey",
+        each [dateFromKey] * 100000000 + [supporterKey] + [legacyMarketingStatusKey],
+        Int64.Type
+    )
+in
+    AddPreviousLegacyMarketingStatusKey
