@@ -1,0 +1,49 @@
+// This query merges data from multiple tables with the "e_factPayment" table, including "e_dimDate" for date information,
+// and two helper queries for marketing and supporter selection attributes. It expands relevant columns at each stage.
+// Developed by hannah.williams@foe.co.uk
+let
+    // Load the source table "e_factPayment"
+    Source = e_factPayment,
+    // Temporary fix until Ivan has investigated issue with incrementalRefreshDate in the dataflow
+    RemovedColumns = Table.RemoveColumns(Source,{"incrementalRefreshDate"}),
+    // Merge the payment data with the "e_dimDate" table to retrieve the "datetime" column (renamed as "incrementalRefreshDate")
+    // by matching the "datePaidKey" from the source with the "dateKey" from the date dimension table
+    MergeWithIncrementalRefreshDate = Table.ExpandTableColumn(
+        Table.NestedJoin(RemovedColumns, {"datePaidKey"}, e_dimDate, {"dateKey"}, "joinedDateData", JoinKind.LeftOuter),
+        "joinedDateData",
+        {"datetime"},
+        {"incrementalRefreshDate"}
+    ),
+    // Merge the result with the helper query "h_marketingKeys_factProductOrder_factDonation" to retrieve the "marketingKey"
+    // by matching "supporterKey" and "donationKey" from both tables
+    MergeWithMarketingKey = Table.ExpandTableColumn(
+        Table.NestedJoin(
+            MergeWithIncrementalRefreshDate,
+            {"supporterKey", "donationKey"},
+            h_marketingKeys_factProductOrder_factDonation,
+            {"supporterKey", "donationKey"},
+            "joinedMarketingData",
+            JoinKind.LeftOuter
+        ),
+        "joinedMarketingData",
+        {"marketingKey"},
+        {"marketingKey"}
+    ),
+    // Merge the result with the helper query "h_supporterSelectionAttributesKey_factProductOrder_factDonation"
+    // to retrieve the "supporterSelectionAttributesKey" by matching "supporterKey" and "donationKey"
+    MergeWithSupporterSelectionAttributesKey = Table.ExpandTableColumn(
+        Table.NestedJoin(
+            MergeWithMarketingKey,
+            {"supporterKey", "donationKey"},
+            h_supporterSelectionAttributesKey_factProductOrder_factDonation,
+            {"supporterKey", "donationKey"},
+            "joinedSupporterSelectionAttributesKeyData",
+            JoinKind.LeftOuter
+        ),
+        "joinedSupporterSelectionAttributesKeyData",
+        {"supporterSelectionAttributesKey"},
+        {"supporterSelectionAttributesKey"}
+    )
+in
+    // Output the final table with all merges completed
+    MergeWithSupporterSelectionAttributesKey
